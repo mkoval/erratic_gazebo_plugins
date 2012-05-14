@@ -137,14 +137,54 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
     this->torque = _sdf->GetElement("torque")->GetValueDouble();
   }
 
-  if (!_sdf->HasElement("topicName"))
+  if (!_sdf->HasElement("twistTopicName"))
   {
-    ROS_WARN("Differential Drive plugin missing <topicName>, defaults to cmd_vel");
-    this->topicName = "cmd_vel";
+    ROS_WARN("Differential Drive plugin missing <twistTopicName>, defaults to cmd_vel");
+    this->twistTopicName = "cmd_vel";
   }
   else
   {
-    this->topicName = _sdf->GetElement("topicName")->GetValueString();
+    this->twistTopicName = _sdf->GetElement("twistTopicName")->GetValueString();
+  }
+
+  if (!_sdf->HasElement("odomTopicName"))
+  {
+    ROS_WARN("Differential Drive plugin missing <odomTopicName>, defaults to odom");
+    this->odomTopicName = "odom";
+  }
+  else
+  {
+    this->odomTopicName = _sdf->GetElement("odomTopicName")->GetValueString();
+  }
+
+  if (!_sdf->HasElement("baseFrame"))
+  {
+    ROS_WARN("Differential Drive plugin missing <baseFrame>, defaults to base_footprint");
+    this->tf_base_frame_ = "base_footprint";
+  }
+  else
+  {
+    this->tf_base_frame_ = _sdf->GetElement("baseFrame")->GetValueString(); 
+  }
+
+  if (!_sdf->HasElement("odomFrame"))
+  {
+    ROS_WARN("Differential Drive plugin missing <odomFrame>, defaults to odom");
+    this->tf_base_frame_ = "odom";
+  }
+  else
+  {
+    this->tf_base_frame_ = _sdf->GetElement("odomFrame")->GetValueString(); 
+  }
+
+  if (!_sdf->HasElement("alpha"))
+  {
+    ROS_WARN("Differential Drive plugin missing <alpha>, defaults to 0.0");
+    this->alpha = 0.0;
+  }
+  else
+  {
+    this->alpha = _sdf->GetElement("alpha")->GetValueDouble();
   }
 
   wheelSpeed[RIGHT] = 0;
@@ -173,11 +213,11 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
 
   // ROS: Subscribe to the velocity command topic (usually "cmd_vel")
   ros::SubscribeOptions so =
-      ros::SubscribeOptions::create<geometry_msgs::Twist>(topicName, 1,
+      ros::SubscribeOptions::create<geometry_msgs::Twist>(twistTopicName, 1,
                                                           boost::bind(&DiffDrivePlugin::cmdVelCallback, this, _1),
                                                           ros::VoidPtr(), &queue_);
   sub_ = rosnode_->subscribe(so);
-  pub_ = rosnode_->advertise<nav_msgs::Odometry>("odom", 1);
+  pub_ = rosnode_->advertise<nav_msgs::Odometry>(odomTopicName, 1);
 
   // Initialize the controller
   // Reset odometric pose
@@ -287,8 +327,8 @@ void DiffDrivePlugin::QueueThread()
 void DiffDrivePlugin::publish_odometry()
 {
   ros::Time current_time = ros::Time::now();
-  std::string odom_frame = tf::resolve(tf_prefix_, "odom");
-  std::string base_footprint_frame = tf::resolve(tf_prefix_, "base_footprint");
+  std::string odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
+  std::string base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
 
   // getting data for base_footprint to odom transform
   math::Pose pose = this->parent->GetState().GetPose();

@@ -85,6 +85,7 @@ private:
   double wheelDiameter;
   double torque;
   double wheelSpeed[2];
+  double alpha;
 
   double odomPose[3];
   double odomVel[3];
@@ -98,12 +99,12 @@ private:
   ros::Subscriber sub_;
   tf::TransformBroadcaster *transform_broadcaster_;
   nav_msgs::Odometry odom_;
-  std::string tf_prefix_;
+  std::string tf_prefix_, tf_base_frame_, tf_odom_frame_;
 
   boost::mutex lock;
 
   std::string robotNamespace;
-  std::string topicName;
+  std::string twistTopicName, odomTopicName;
 
   // Custom Callback Queue
   ros::CallbackQueue queue_;
