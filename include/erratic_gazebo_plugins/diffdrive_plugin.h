@@ -31,6 +31,9 @@
 #include <map>
 
 #include <gazebo.h>
+#include <common/common.h>
+#include <physics/physics.h>
+#include <transport/TransportTypes.hh>
 #include <common/Time.hh>
 #include <physics/Joint.hh>
 #include <physics/PhysicsTypes.hh>
