@@ -61,6 +61,8 @@ enum
 
 // Constructor
 DiffDrivePlugin::DiffDrivePlugin()
+  : last_pos_(0.0, 0.0, 0.0)
+  , last_yaw_(0.0)
 {
 }
 
@@ -170,11 +172,11 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
   if (!_sdf->HasElement("odomFrame"))
   {
     ROS_WARN("Differential Drive plugin missing <odomFrame>, defaults to odom");
-    this->tf_base_frame_ = "odom";
+    this->tf_odom_frame_ = "odom";
   }
   else
   {
-    this->tf_base_frame_ = _sdf->GetElement("odomFrame")->GetValueString(); 
+    this->tf_odom_frame_ = _sdf->GetElement("odomFrame")->GetValueString(); 
   }
 
   if (!_sdf->HasElement("alpha"))
