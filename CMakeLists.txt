@@ -9,4 +9,4 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 rosbuild_add_boost_directories()
 
 rosbuild_add_library(diffdrive_plugin src/diffdrive_plugin.cpp)
-rosbuild_link_boost(diffdrive_plugin thread)
+rosbuild_link_boost(diffdrive_plugin system thread)

@@ -187,6 +187,16 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
     this->alpha = _sdf->GetElement("alpha")->GetValueDouble();
   }
 
+  if (!_sdf->HasElement("beta"))
+  {
+    ROS_WARN("Differential Drive plugin missing <beta>, defaults to 0.0");
+    this->beta = 0.0;
+  }
+  else
+  {
+    this->beta = _sdf->GetElement("beta")->GetValueDouble();
+  }
+
   wheelSpeed[RIGHT] = 0;
   wheelSpeed[LEFT] = 0;
 
@@ -326,41 +336,60 @@ void DiffDrivePlugin::QueueThread()
 
 void DiffDrivePlugin::publish_odometry()
 {
-  ros::Time current_time = ros::Time::now();
-  std::string odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
-  std::string base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
+  ros::Time const current_time = ros::Time::now();
+  std::string const odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
+  std::string const base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
 
   // getting data for base_footprint to odom transform
-  math::Pose pose = this->parent->GetState().GetPose();
+  math::Pose const pose = this->parent->GetState().GetPose();
+  btQuaternion const qt(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
+  btVector3 const vt(pose.pos.x, pose.pos.y, pose.pos.z);
 
-  btQuaternion qt(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
-  btVector3 vt(pose.pos.x, pose.pos.y, pose.pos.z);
+  // Add Gaussian noise to both components of the relative polar coordinates.
+  // FIXME: This depends on the robot driving in exactly the same direction as
+  // its orientation.
+  double yaw = tf::getYaw(qt);
+  btVector3 const delta_pos = vt - last_pos_;
+  double delta_length = delta_pos.length();
+  double delta_yaw = angles::normalize_angle(yaw - last_yaw_);
 
-  tf::Transform base_footprint_to_odom(qt, vt);
-  transform_broadcaster_->sendTransform(tf::StampedTransform(base_footprint_to_odom,
-                                                             current_time,
-                                                             odom_frame,
-                                                             base_footprint_frame));
+  if (delta_length > 0 && alpha > 0) {
+    boost::normal_distribution<> noise_linear(0, alpha * delta_length);
+    delta_length += noise_linear(rng_);
+  }
+  if (delta_yaw > 0 && beta > 0) {
+    boost::normal_distribution<> noise_angular(0, beta * fabs(delta_yaw));
+    delta_yaw += noise_angular(rng_);
+    yaw = angles::normalize_angle(last_yaw_ + delta_yaw); 
+  }
+  math::Vector3 const linear = this->parent->GetWorldLinearVel();
 
-  // publish odom topic
-  odom_.pose.pose.position.x = pose.pos.x;
-  odom_.pose.pose.position.y = pose.pos.y;
-
-  odom_.pose.pose.orientation.x = pose.rot.x;
-  odom_.pose.pose.orientation.y = pose.rot.y;
-  odom_.pose.pose.orientation.z = pose.rot.z;
-  odom_.pose.pose.orientation.w = pose.rot.w;
-
-  math::Vector3 linear = this->parent->GetWorldLinearVel();
-  odom_.twist.twist.linear.x = linear.x;
-  odom_.twist.twist.linear.y = linear.y;
-  odom_.twist.twist.angular.z = this->parent->GetWorldAngularVel().z;
-
+  // Publish the Odometry message.
   odom_.header.stamp = current_time;
   odom_.header.frame_id = odom_frame;
   odom_.child_frame_id = base_footprint_frame;
-
+  odom_.pose.pose.position.x = last_pos_[0] + delta_length * cos(yaw);
+  odom_.pose.pose.position.y = last_pos_[1] + delta_length * sin(yaw);
+  odom_.pose.pose.position.z = last_pos_[2];
+  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(yaw);
+  //  FIXME: This velocity should be corrupted by the same noise as the
+  //  position estimate, since both would be estimated by the same sensor.
+  odom_.twist.twist.linear.x = linear.x;
+  odom_.twist.twist.linear.y = linear.y;
+  odom_.twist.twist.angular.z = this->parent->GetWorldAngularVel().z;
   pub_.publish(odom_);
+
+  // Broadcast the corresponding TF transform from /odom to /base_footprint.
+  btVector3 const noisy_vt(odom_.pose.pose.position.x, odom_.pose.pose.position.y, 0);
+  btQuaternion const noisy_qt(odom_.pose.pose.orientation.x, odom_.pose.pose.orientation.y,
+                              odom_.pose.pose.orientation.z, odom_.pose.pose.orientation.w);
+  tf::Transform base_footprint_to_odom(noisy_qt, noisy_vt);
+  transform_broadcaster_->sendTransform(
+    tf::StampedTransform(
+      base_footprint_to_odom, current_time, odom_frame, base_footprint_frame));
+
+  last_pos_ = vt;
+  last_yaw_ = yaw;
 }
 
 // Update the data in the interface

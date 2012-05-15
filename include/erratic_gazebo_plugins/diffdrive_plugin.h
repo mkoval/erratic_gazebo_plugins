@@ -41,6 +41,7 @@
 
 // ROS
 #include <ros/ros.h>
+#include <angles/angles.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <geometry_msgs/Twist.h>
@@ -53,6 +54,8 @@
 // Boost
 #include <boost/thread.hpp>
 #include <boost/bind.hpp>
+#include <boost/random/mersenne_twister.hpp>
+#include <boost/random/normal_distribution.hpp>
 
 namespace gazebo
 {
@@ -86,12 +89,18 @@ private:
   double torque;
   double wheelSpeed[2];
   double alpha;
+  double beta;
 
   double odomPose[3];
   double odomVel[3];
 
   physics::JointPtr joints[2];
   physics::PhysicsEnginePtr physicsEngine;
+
+  // Odometry Noise
+  boost::mt19937 rng_;
+  btVector3 last_pos_;
+  double last_yaw_;
 
   // ROS STUFF
   ros::NodeHandle* rosnode_;

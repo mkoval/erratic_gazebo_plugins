@@ -13,6 +13,8 @@
     <depend package="roscpp"/>
     <depend package="gazebo"/>
     <depend package="gazebo_plugins"/>
+    <depend package="angles"/>
+    <depend package="tf"/>
 
     <export>
         <gazebo plugin_path="${prefix}/lib" />
