@@ -436,6 +436,7 @@ void DiffDrivePlugin::publish_odometry()
   robot_kf::WheelOdometry wheel_odom;
   wheel_odom.header.stamp = curr_time;
   wheel_odom.header.frame_id = base_footprint_frame;
+  wheel_odom.separation = wheelSeparation;
   wheel_odom.left.movement = update.v_left;
   wheel_odom.left.variance = pow(stddev_left, 2);
   wheel_odom.right.movement = update.v_right;
