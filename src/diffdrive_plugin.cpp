@@ -201,6 +201,16 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
     this->alpha = _sdf->GetElement("alpha")->GetValueDouble();
   }
 
+  if (!_sdf->HasElement("updateRate"))
+  {
+    ROS_WARN("Differential Drive plugin missing <updateRate>, defaults to 50.0 ms");
+    rate_ = 50.0;
+  }
+  else
+  {
+    rate_ = _sdf->GetElement("updateRate")->GetValueDouble();
+  }
+
   wheelSpeed[RIGHT] = 0;
   wheelSpeed[LEFT] = 0;
 
@@ -384,8 +394,10 @@ void DiffDrivePlugin::publish_odometry()
   typedef boost::normal_distribution<> normal_distribution;
   typedef boost::variate_generator<boost::mt19937 &, boost::normal_distribution<> > normal_generator;
 
+  // Throttle the update rate to the user-defined period.
   ros::Time const curr_time = ros::Time::now();
   double const delta_time = (curr_time - last_time_).toSec();
+  if (delta_time < 0.001 * rate_) return;
   
   std::string const odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
   std::string const base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);

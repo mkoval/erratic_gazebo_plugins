@@ -107,6 +107,7 @@ private:
 
   // Odometry Noise
   ros::Time last_time_;
+  double rate_;
   boost::mt19937 rng_;
   double last_true_yaw_, last_odom_yaw_;
   btVector3 last_true_pos_, last_odom_pos_;
