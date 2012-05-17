@@ -191,16 +191,6 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
     this->alpha = _sdf->GetElement("alpha")->GetValueDouble();
   }
 
-  if (!_sdf->HasElement("beta"))
-  {
-    ROS_WARN("Differential Drive plugin missing <beta>, defaults to 0.0");
-    this->beta = 0.0;
-  }
-  else
-  {
-    this->beta = _sdf->GetElement("beta")->GetValueDouble();
-  }
-
   wheelSpeed[RIGHT] = 0;
   wheelSpeed[LEFT] = 0;
 

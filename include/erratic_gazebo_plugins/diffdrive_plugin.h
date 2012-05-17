@@ -92,7 +92,6 @@ private:
   double torque;
   double wheelSpeed[2];
   double alpha;
-  double beta;
 
   double odomPose[3];
   double odomVel[3];
