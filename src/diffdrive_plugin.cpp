@@ -338,6 +338,9 @@ void DiffDrivePlugin::QueueThread()
 
 void DiffDrivePlugin::publish_odometry()
 {
+  typedef boost::normal_distribution<> normal_distribution;
+  typedef boost::variate_generator<boost::mt19937 &, boost::normal_distribution<> > normal_generator;
+
   ros::Time const current_time = ros::Time::now();
   std::string const odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
   std::string const base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
@@ -355,13 +358,15 @@ void DiffDrivePlugin::publish_odometry()
   double delta_length = delta_pos.length();
   double delta_yaw = angles::normalize_angle(yaw - last_yaw_);
 
-  if (delta_length > 0 && alpha > 0) {
-    boost::normal_distribution<> noise_linear(0, alpha * delta_length);
-    delta_length += noise_linear(rng_);
+  if (alpha * delta_length > 0) {
+    normal_distribution dist_linear(0, alpha * delta_length);
+    normal_generator gen_linear(rng_, dist_linear);
+    delta_length += gen_linear();
   }
-  if (delta_yaw > 0 && beta > 0) {
-    boost::normal_distribution<> noise_angular(0, beta * fabs(delta_yaw));
-    delta_yaw += noise_angular(rng_);
+  if (beta * fabs(delta_yaw) > 0) {
+    normal_distribution dist_angular(0, beta * fabs(delta_yaw));
+    normal_generator gen_angular(rng_, dist_angular);
+    delta_yaw += gen_angular();
     yaw = angles::normalize_angle(last_yaw_ + delta_yaw); 
   }
   math::Vector3 const linear = this->parent->GetWorldLinearVel();
