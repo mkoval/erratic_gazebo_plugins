@@ -64,6 +64,7 @@ DiffDrivePlugin::DiffDrivePlugin()
   : last_pos_(0.0, 0.0, 0.0)
   , last_yaw_(0.0)
 {
+  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(0.0);
 }
 
 // Destructor
@@ -347,55 +348,56 @@ void DiffDrivePlugin::publish_odometry()
 
   // getting data for base_footprint to odom transform
   math::Pose const pose = this->parent->GetState().GetPose();
-  btQuaternion const qt(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
-  btVector3 const vt(pose.pos.x, pose.pos.y, pose.pos.z);
+  btQuaternion const curr_yaw(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
+  btVector3 const curr_pos(pose.pos.x, pose.pos.y, pose.pos.z);
 
   // Add Gaussian noise to both components of the relative polar coordinates.
   // FIXME: This depends on the robot driving in exactly the same direction as
   // its orientation.
-  double yaw = tf::getYaw(qt);
-  btVector3 const delta_pos = vt - last_pos_;
+  double yaw = tf::getYaw(curr_yaw);
+  btVector3 const delta_pos = curr_pos - last_pos_;
   double delta_length = delta_pos.length();
   double delta_yaw = angles::normalize_angle(yaw - last_yaw_);
 
   if (alpha * delta_length > 0) {
-    normal_distribution dist_linear(0, alpha * delta_length);
+    normal_distribution dist_linear(delta_length, alpha * delta_length);
     normal_generator gen_linear(rng_, dist_linear);
-    delta_length += gen_linear();
+    delta_length = gen_linear();
   }
   if (beta * fabs(delta_yaw) > 0) {
-    normal_distribution dist_angular(0, beta * fabs(delta_yaw));
+    normal_distribution dist_angular(delta_yaw, beta * fabs(delta_yaw));
     normal_generator gen_angular(rng_, dist_angular);
-    delta_yaw += gen_angular();
-    yaw = angles::normalize_angle(last_yaw_ + delta_yaw); 
+    delta_yaw = gen_angular();
   }
-  math::Vector3 const linear = this->parent->GetWorldLinearVel();
 
   // Publish the Odometry message.
   odom_.header.stamp = current_time;
   odom_.header.frame_id = odom_frame;
   odom_.child_frame_id = base_footprint_frame;
-  odom_.pose.pose.position.x = last_pos_[0] + delta_length * cos(yaw);
-  odom_.pose.pose.position.y = last_pos_[1] + delta_length * sin(yaw);
-  odom_.pose.pose.position.z = last_pos_[2];
-  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(yaw);
-  //  FIXME: This velocity should be corrupted by the same noise as the
-  //  position estimate, since both would be estimated by the same sensor.
+  odom_.pose.pose.position.x += delta_length * cos(yaw);
+  odom_.pose.pose.position.y += delta_length * sin(yaw);
+  double const new_yaw = tf::getYaw(odom_.pose.pose.orientation) + delta_yaw;
+  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(new_yaw);
+  odom_.pose.pose.orientation.x = new_yaw;
+
+  // FIXME: This velocity should be corrupted by the same noise as the
+  // position estimate, since both would be estimated by the same sensor.
+  math::Vector3 const linear = this->parent->GetWorldLinearVel();
   odom_.twist.twist.linear.x = linear.x;
   odom_.twist.twist.linear.y = linear.y;
   odom_.twist.twist.angular.z = this->parent->GetWorldAngularVel().z;
   pub_.publish(odom_);
 
   // Broadcast the corresponding TF transform from /odom to /base_footprint.
-  btVector3 const noisy_vt(odom_.pose.pose.position.x, odom_.pose.pose.position.y, 0);
-  btQuaternion const noisy_qt(odom_.pose.pose.orientation.x, odom_.pose.pose.orientation.y,
-                              odom_.pose.pose.orientation.z, odom_.pose.pose.orientation.w);
-  tf::Transform base_footprint_to_odom(noisy_qt, noisy_vt);
+  btVector3 const noisy_pos(odom_.pose.pose.position.x, odom_.pose.pose.position.y, 0);
+  btQuaternion const noisy_yaw(odom_.pose.pose.orientation.x, odom_.pose.pose.orientation.y,
+                               odom_.pose.pose.orientation.z, odom_.pose.pose.orientation.w);
+  tf::Transform base_footprint_to_odom(noisy_yaw, noisy_pos);
   transform_broadcaster_->sendTransform(
     tf::StampedTransform(
       base_footprint_to_odom, current_time, odom_frame, base_footprint_frame));
 
-  last_pos_ = vt;
+  last_pos_ = curr_pos;
   last_yaw_ = yaw;
 }
 
