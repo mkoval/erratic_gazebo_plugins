@@ -76,6 +76,12 @@ private:
   typedef boost::normal_distribution<> normal_dist;
   typedef boost::variate_generator<RNGType &, normal_dist> normal_gen;
 
+  struct OdometryUpdate {
+    btVector3 curr_odom_pos;
+    double curr_odom_yaw;
+    double v_left, v_right;
+  };
+
   void write_position_data();
   void publish_odometry();
   void GetPositionCmd();
@@ -100,13 +106,14 @@ private:
   physics::PhysicsEnginePtr physicsEngine;
 
   // Odometry Noise
+  ros::Time last_time_;
   boost::mt19937 rng_;
   double last_true_yaw_, last_odom_yaw_;
   btVector3 last_true_pos_, last_odom_pos_;
 
   // ROS STUFF
   ros::NodeHandle* rosnode_;
-  ros::Publisher pub_;
+  ros::Publisher pub_odom_, pub_wheel_;
   ros::Subscriber sub_;
   tf::TransformBroadcaster *transform_broadcaster_;
   std::string tf_prefix_, tf_base_frame_, tf_odom_frame_;
@@ -114,7 +121,7 @@ private:
   boost::mutex lock;
 
   std::string robotNamespace;
-  std::string twistTopicName, odomTopicName;
+  std::string twistTopicName, odomTopicName, wheelOdomTopicName;
 
   // Custom Callback Queue
   ros::CallbackQueue queue_;
@@ -122,8 +129,7 @@ private:
   void QueueThread();
 
   // DiffDrive stuff
-  std::pair<btVector3, double> generateError(btVector3 const &curr_true_pose,
-                                             double curr_true_yaw);
+  OdometryUpdate generateError(btVector3 const &curr_true_pose, double curr_true_yaw);
   void cmdVelCallback(const geometry_msgs::Twist::ConstPtr& cmd_msg);
 
   double x_;
@@ -135,3 +141,5 @@ private:
 
 #endif
 
+/* vim: set ts=2 sts=2 sw=2: */
+/* vim: set ts=2 sts=2 sw=2: */

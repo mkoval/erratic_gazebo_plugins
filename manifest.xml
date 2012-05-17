@@ -15,7 +15,8 @@
     <depend package="gazebo_plugins"/>
     <depend package="angles"/>
     <depend package="tf"/>
-
+    <!-- TODO: Move WheelOdometry into a separate package. -->
+    <depend package="robot_kf"/>
     <export>
         <gazebo plugin_path="${prefix}/lib" />
     </export>

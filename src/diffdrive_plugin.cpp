@@ -48,6 +48,7 @@
 #include <tf/transform_listener.h>
 #include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
+#include <robot_kf/WheelOdometry.h>
 #include <boost/bind.hpp>
 
 namespace gazebo
@@ -136,8 +137,7 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
     ROS_WARN("Differential Drive plugin missing <torque>, defaults to 5.0");
     this->torque = 5.0;
   }
-  else
-  {
+  else {
     this->torque = _sdf->GetElement("torque")->GetValueDouble();
   }
 
@@ -159,6 +159,16 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
   else
   {
     this->odomTopicName = _sdf->GetElement("odomTopicName")->GetValueString();
+  }
+
+  if (!_sdf->HasElement("wheelTopicName"))
+  {
+    ROS_WARN("Differential Drive plugin missing <wheelTopicName>, defaults to wheel_odom");
+    this->wheelOdomTopicName = "wheel_odom";
+  }
+  else
+  {
+    this->wheelOdomTopicName = _sdf->GetElement("wheelTopicName")->GetValueString();
   }
 
   if (!_sdf->HasElement("baseFrame"))
@@ -221,7 +231,8 @@ void DiffDrivePlugin::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
                                                           boost::bind(&DiffDrivePlugin::cmdVelCallback, this, _1),
                                                           ros::VoidPtr(), &queue_);
   sub_ = rosnode_->subscribe(so);
-  pub_ = rosnode_->advertise<nav_msgs::Odometry>(odomTopicName, 1);
+  pub_odom_  = rosnode_->advertise<nav_msgs::Odometry>(odomTopicName, 1);
+  pub_wheel_ = rosnode_->advertise<robot_kf::WheelOdometry>(wheelOdomTopicName, 10);
 
   // Initialize the controller
   // Reset odometric pose
@@ -328,10 +339,11 @@ void DiffDrivePlugin::QueueThread()
   }
 }
 
-std::pair<btVector3, double> DiffDrivePlugin::generateError(
+DiffDrivePlugin::OdometryUpdate DiffDrivePlugin::generateError(
   btVector3 const &curr_true_pos, double const curr_true_yaw)
 {
-  static double const min_variance = 1e-6;
+  double const min_variance = 1e-6;
+  OdometryUpdate odom;
 
   // Convert the changes into polar coordinates.
   btVector3 const delta_true_pos = curr_true_pos - last_true_pos_;
@@ -358,13 +370,13 @@ std::pair<btVector3, double> DiffDrivePlugin::generateError(
   double const noisy_delta_yaw    = (noisy_v_right - noisy_v_left) / wheelSeparation;
 
   // Convert back from polar coordinates to cartaesian coordinates.
-  btVector3 const noisy_pos(
-    last_odom_pos_[0] + noisy_delta_linear * cos(last_odom_yaw_),
-    last_odom_pos_[1] + noisy_delta_linear * sin(last_odom_yaw_),
-    0.0);
-  double const noisy_yaw = angles::normalize_angle(last_odom_yaw_ + noisy_delta_yaw);
-
-  return std::make_pair<btVector3, double>(noisy_pos, noisy_yaw);
+  odom.curr_odom_pos[0] = last_odom_pos_[0] + noisy_delta_linear * cos(last_odom_yaw_);
+  odom.curr_odom_pos[1] = last_odom_pos_[1] + noisy_delta_linear * sin(last_odom_yaw_);
+  odom.curr_odom_pos[2] = last_odom_pos_[2];
+  odom.curr_odom_yaw = angles::normalize_angle(last_odom_yaw_ + noisy_delta_yaw);
+  odom.v_left  = noisy_v_left;
+  odom.v_right = noisy_v_right;
+  return odom;
 }
 
 void DiffDrivePlugin::publish_odometry()
@@ -372,7 +384,9 @@ void DiffDrivePlugin::publish_odometry()
   typedef boost::normal_distribution<> normal_distribution;
   typedef boost::variate_generator<boost::mt19937 &, boost::normal_distribution<> > normal_generator;
 
-  ros::Time const current_time = ros::Time::now();
+  ros::Time const curr_time = ros::Time::now();
+  double const delta_time = (curr_time - last_time_).toSec();
+  
   std::string const odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
   std::string const base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
 
@@ -383,18 +397,16 @@ void DiffDrivePlugin::publish_odometry()
   double const curr_true_yaw = tf::getYaw(curr_true_qt);
 
   // Add encoder noise.
-  std::pair<btVector3, double> const odom_update = generateError(curr_true_pos, curr_true_yaw);
-  btVector3 const curr_odom_pos = odom_update.first;
-  double const curr_odom_yaw = odom_update.second;
+  OdometryUpdate const update = generateError(curr_true_pos, curr_true_yaw);
 
   // Publish the Odometry message.
   nav_msgs::Odometry odom;
-  odom.header.stamp = current_time;
+  odom.header.stamp = curr_time;
   odom.header.frame_id = odom_frame;
   odom.child_frame_id = base_footprint_frame;
-  odom.pose.pose.position.x = curr_odom_pos[0];
-  odom.pose.pose.position.y = curr_odom_pos[1];
-  odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(curr_odom_yaw);
+  odom.pose.pose.position.x = update.curr_odom_pos[0];
+  odom.pose.pose.position.y = update.curr_odom_pos[1];
+  odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(update.curr_odom_yaw);
 
   // FIXME: This velocity should be corrupted by the same noise as the
   // position estimate, since both would be estimated by the same sensor.
@@ -403,19 +415,30 @@ void DiffDrivePlugin::publish_odometry()
   odom.twist.twist.linear.x = v_linear.x;
   odom.twist.twist.linear.y = v_linear.y;
   odom.twist.twist.angular.z = v_angular.z;
-  pub_.publish(odom);
+  pub_odom_.publish(odom);
+
+  // Publish the WheelOdometry message.
+  robot_kf::WheelOdometry wheel_odom;
+  wheel_odom.header.stamp = curr_time;
+  wheel_odom.header.frame_id = base_footprint_frame;
+  wheel_odom.movement_left  = update.v_left / delta_time; 
+  wheel_odom.movement_right = update.v_right / delta_time;
+  wheel_odom.velocity_left  = update.v_left;
+  wheel_odom.velocity_right = update.v_right;
+  pub_wheel_.publish(wheel_odom);
 
   // Broadcast the corresponding TF transform from /odom to /base_footprint.
-  tf::Quaternion const curr_odom_qt = tf::createQuaternionFromYaw(curr_odom_yaw);
-  tf::Transform const base_footprint_to_odom(curr_odom_qt, curr_odom_pos);
+  tf::Quaternion const curr_odom_qt = tf::createQuaternionFromYaw(update.curr_odom_yaw);
+  tf::Transform const base_footprint_to_odom(curr_odom_qt, update.curr_odom_pos);
   transform_broadcaster_->sendTransform(
     tf::StampedTransform(
-      base_footprint_to_odom, current_time, odom_frame, base_footprint_frame));
+      base_footprint_to_odom, curr_time, odom_frame, base_footprint_frame));
 
+  last_time_ = curr_time;
   last_true_pos_ = curr_true_pos;
   last_true_yaw_ = curr_true_yaw;
-  last_odom_pos_ = curr_odom_pos;
-  last_odom_yaw_ = curr_odom_yaw;
+  last_odom_pos_ = update.curr_odom_pos;
+  last_odom_yaw_ = update.curr_odom_yaw;
 }
 
 // Update the data in the interface
@@ -443,3 +466,5 @@ void DiffDrivePlugin::write_position_data()
 
 GZ_REGISTER_MODEL_PLUGIN(DiffDrivePlugin)
 }
+
+/* vim: set ts=2 sts=2 sw=2: */
