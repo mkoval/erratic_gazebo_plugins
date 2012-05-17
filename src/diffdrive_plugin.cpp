@@ -360,6 +360,7 @@ void DiffDrivePlugin::publish_odometry()
   btVector3 const delta_pos = curr_pos - last_pos_;
   double delta_length = delta_pos.length();
   double delta_yaw = angles::normalize_angle(yaw - last_yaw_);
+  double direction = atan2(delta_pos[1], delta_pos[0]);
 
   if (alpha * delta_length > 0) {
     normal_distribution dist_linear(delta_length, alpha * delta_length);
@@ -367,15 +368,17 @@ void DiffDrivePlugin::publish_odometry()
     delta_length = gen_linear();
   }
   if (beta * fabs(delta_yaw) > 0) {
-    normal_distribution dist_angular(delta_yaw, beta * fabs(delta_yaw));
-    normal_generator gen_angular(rng_, dist_angular);
-    delta_yaw = gen_angular();
+    normal_distribution dist_angular_noise(0.0, beta * fabs(delta_yaw));
+    normal_generator gen_angular_noise(rng_, dist_angular_noise);
+    double const angular_noise = gen_angular_noise();
+    delta_yaw += angular_noise;
+    direction += angular_noise;
   }
 
   // Update the odometry estimate by integrating the relative movements.
   double curr_odom_yaw = angles::normalize_angle(last_odom_yaw_ + delta_yaw);
   btVector3 const curr_odom_pos = last_odom_pos_
-    + delta_length * btVector3(cos(last_odom_yaw_), sin(last_odom_yaw_), 0.0);
+    + delta_length * btVector3(cos(direction), sin(direction), 0.0);
 
   // Publish the Odometry message.
   odom_.header.stamp = current_time;
