@@ -60,13 +60,12 @@ enum
 };
 
 // Constructor
-DiffDrivePlugin::DiffDrivePlugin()
-  : last_pos_(0.0, 0.0, 0.0)
-  , last_odom_pos_(0.0, 0.0, 0.0)
-  , last_yaw_(0.0)
-  , last_odom_yaw_(0.0)
+DiffDrivePlugin::DiffDrivePlugin(void)
+  : last_true_yaw_(0)
+  , last_odom_yaw_(0)
+  , last_true_pos_(0, 0, 0)
+  , last_odom_pos_(0, 0, 0)
 {
-  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(0.0);
 }
 
 // Destructor
@@ -339,6 +338,45 @@ void DiffDrivePlugin::QueueThread()
   }
 }
 
+std::pair<btVector3, double> DiffDrivePlugin::generateError(
+  btVector3 const &curr_true_pos, double const curr_true_yaw)
+{
+  static double const min_variance = 1e-6;
+
+  // Convert the changes into polar coordinates.
+  btVector3 const delta_true_pos = curr_true_pos - last_true_pos_;
+  btVector3 const u(cos(last_true_yaw_), sin(last_true_yaw_), 0.0);
+  double const delta_linear = delta_true_pos.dot(u);
+  double const delta_yaw    = angles::normalize_angle(curr_true_yaw - last_true_yaw_);
+
+  // Convert from polar coordinates to encoder ticks.
+  double const v_left  = delta_linear - 0.5 * wheelSeparation * delta_yaw;
+  double const v_right = delta_linear + 0.5 * wheelSeparation * delta_yaw;
+
+  // Add noise to the encoder ticks.
+  double const sigma_left  = std::max(alpha * v_left,  min_variance);
+  double const sigma_right = std::max(alpha * v_right, min_variance);
+  normal_dist const dist_left(v_left, sigma_left);
+  normal_dist const dist_right(v_right, sigma_right);
+  normal_gen gen_noisy_left(rng_, dist_left);
+  normal_gen gen_noisy_right(rng_, dist_right);
+  double const noisy_v_left  = gen_noisy_left();
+  double const noisy_v_right = gen_noisy_right();
+
+  // Convert back from encoder ticks to polar coordinates.
+  double const noisy_delta_linear = 0.5 * (noisy_v_left + noisy_v_right);
+  double const noisy_delta_yaw    = (noisy_v_right - noisy_v_left) / wheelSeparation;
+
+  // Convert back from polar coordinates to cartaesian coordinates.
+  btVector3 const noisy_pos(
+    last_odom_pos_[0] + noisy_delta_linear * cos(last_odom_yaw_),
+    last_odom_pos_[1] + noisy_delta_linear * sin(last_odom_yaw_),
+    0.0);
+  double const noisy_yaw = angles::normalize_angle(last_odom_yaw_ + noisy_delta_yaw);
+
+  return std::make_pair<btVector3, double>(noisy_pos, noisy_yaw);
+}
+
 void DiffDrivePlugin::publish_odometry()
 {
   typedef boost::normal_distribution<> normal_distribution;
@@ -348,54 +386,34 @@ void DiffDrivePlugin::publish_odometry()
   std::string const odom_frame = tf::resolve(tf_prefix_, tf_odom_frame_);
   std::string const base_footprint_frame = tf::resolve(tf_prefix_, tf_base_frame_);
 
-  // getting data for base_footprint to odom transform
-  math::Pose const pose = this->parent->GetState().GetPose();
-  btQuaternion const curr_yaw(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
-  btVector3 const curr_pos(pose.pos.x, pose.pos.y, pose.pos.z);
+  // Get the actual pose from Gazebo.
+  math::Pose const pose = parent->GetState().GetPose();
+  btVector3 const curr_true_pos(pose.pos.x, pose.pos.y, pose.pos.z);
+  btQuaternion const curr_true_qt(pose.rot.x, pose.rot.y, pose.rot.z, pose.rot.w);
+  double const curr_true_yaw = tf::getYaw(curr_true_qt);
 
-  // Add Gaussian noise to both components of the relative polar coordinates.
-  // FIXME: This depends on the robot driving in exactly the same direction as
-  // its orientation.
-  double yaw = tf::getYaw(curr_yaw);
-  btVector3 const delta_pos = curr_pos - last_pos_;
-  double delta_length = delta_pos.length();
-  double delta_yaw = angles::normalize_angle(yaw - last_yaw_);
-  double direction = atan2(delta_pos[1], delta_pos[0]);
-
-  if (alpha * delta_length > 0) {
-    normal_distribution dist_linear(delta_length, alpha * delta_length);
-    normal_generator gen_linear(rng_, dist_linear);
-    delta_length = gen_linear();
-  }
-  if (beta * fabs(delta_yaw) > 0) {
-    normal_distribution dist_angular_noise(0.0, beta * fabs(delta_yaw));
-    normal_generator gen_angular_noise(rng_, dist_angular_noise);
-    double const angular_noise = gen_angular_noise();
-    delta_yaw += angular_noise;
-    direction += angular_noise;
-  }
-
-  // Update the odometry estimate by integrating the relative movements.
-  double curr_odom_yaw = angles::normalize_angle(last_odom_yaw_ + delta_yaw);
-  btVector3 const curr_odom_pos = last_odom_pos_
-    + delta_length * btVector3(cos(direction), sin(direction), 0.0);
+  // Add encoder noise.
+  std::pair<btVector3, double> const odom_update = generateError(curr_true_pos, curr_true_yaw);
+  btVector3 const curr_odom_pos = odom_update.first;
+  double const curr_odom_yaw = odom_update.second;
 
   // Publish the Odometry message.
-  odom_.header.stamp = current_time;
-  odom_.header.frame_id = odom_frame;
-  odom_.child_frame_id = base_footprint_frame;
-  odom_.pose.pose.position.x = curr_odom_pos[0];
-  odom_.pose.pose.position.y = curr_odom_pos[1];
-  odom_.pose.pose.orientation = tf::createQuaternionMsgFromYaw(curr_odom_yaw);
+  nav_msgs::Odometry odom;
+  odom.header.stamp = current_time;
+  odom.header.frame_id = odom_frame;
+  odom.child_frame_id = base_footprint_frame;
+  odom.pose.pose.position.x = curr_odom_pos[0];
+  odom.pose.pose.position.y = curr_odom_pos[1];
+  odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(curr_odom_yaw);
 
   // FIXME: This velocity should be corrupted by the same noise as the
   // position estimate, since both would be estimated by the same sensor.
   math::Vector3 const v_linear = parent->GetWorldLinearVel();
   math::Vector3 const v_angular = parent->GetWorldAngularVel();
-  odom_.twist.twist.linear.x = v_linear.x;
-  odom_.twist.twist.linear.y = v_linear.y;
-  odom_.twist.twist.angular.z = v_angular.z;
-  pub_.publish(odom_);
+  odom.twist.twist.linear.x = v_linear.x;
+  odom.twist.twist.linear.y = v_linear.y;
+  odom.twist.twist.angular.z = v_angular.z;
+  pub_.publish(odom);
 
   // Broadcast the corresponding TF transform from /odom to /base_footprint.
   tf::Quaternion const curr_odom_qt = tf::createQuaternionFromYaw(curr_odom_yaw);
@@ -404,8 +422,8 @@ void DiffDrivePlugin::publish_odometry()
     tf::StampedTransform(
       base_footprint_to_odom, current_time, odom_frame, base_footprint_frame));
 
-  last_pos_ = curr_pos;
-  last_yaw_ = yaw;
+  last_true_pos_ = curr_true_pos;
+  last_true_yaw_ = curr_true_yaw;
   last_odom_pos_ = curr_odom_pos;
   last_odom_yaw_ = curr_odom_yaw;
 }

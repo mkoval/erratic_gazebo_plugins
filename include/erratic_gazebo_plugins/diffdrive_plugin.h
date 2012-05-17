@@ -65,8 +65,6 @@ class Entity;
 
 class DiffDrivePlugin : public ModelPlugin
 {
-
-
   public: DiffDrivePlugin();
   public: ~DiffDrivePlugin();
   public: void Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf);
@@ -74,6 +72,10 @@ class DiffDrivePlugin : public ModelPlugin
   protected: virtual void FiniChild();
 
 private:
+  typedef boost::mt19937 RNGType;
+  typedef boost::normal_distribution<> normal_dist;
+  typedef boost::variate_generator<RNGType &, normal_dist> normal_gen;
+
   void write_position_data();
   void publish_odometry();
   void GetPositionCmd();
@@ -100,15 +102,14 @@ private:
 
   // Odometry Noise
   boost::mt19937 rng_;
-  btVector3 last_pos_, last_odom_pos_;
-  double last_yaw_, last_odom_yaw_;
+  double last_true_yaw_, last_odom_yaw_;
+  btVector3 last_true_pos_, last_odom_pos_;
 
   // ROS STUFF
   ros::NodeHandle* rosnode_;
   ros::Publisher pub_;
   ros::Subscriber sub_;
   tf::TransformBroadcaster *transform_broadcaster_;
-  nav_msgs::Odometry odom_;
   std::string tf_prefix_, tf_base_frame_, tf_odom_frame_;
 
   boost::mutex lock;
@@ -122,6 +123,8 @@ private:
   void QueueThread();
 
   // DiffDrive stuff
+  std::pair<btVector3, double> generateError(btVector3 const &curr_true_pose,
+                                             double curr_true_yaw);
   void cmdVelCallback(const geometry_msgs::Twist::ConstPtr& cmd_msg);
 
   double x_;
