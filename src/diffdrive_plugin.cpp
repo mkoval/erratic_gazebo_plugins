@@ -51,6 +51,8 @@
 #include <robot_kf/WheelOdometry.h>
 #include <boost/bind.hpp>
 
+static double const min_variance = 1e-6;
+
 namespace gazebo
 {
 
@@ -352,7 +354,6 @@ void DiffDrivePlugin::QueueThread()
 DiffDrivePlugin::OdometryUpdate DiffDrivePlugin::generateError(
   btVector3 const &curr_true_pos, double const curr_true_yaw)
 {
-  double const min_variance = 1e-6;
   OdometryUpdate odom;
 
   // Convert the changes into polar coordinates.
@@ -366,8 +367,8 @@ DiffDrivePlugin::OdometryUpdate DiffDrivePlugin::generateError(
   double const v_right = delta_linear + 0.5 * wheelSeparation * delta_yaw;
 
   // Add noise to the encoder ticks.
-  double const sigma_left  = std::max(alpha * v_left,  min_variance);
-  double const sigma_right = std::max(alpha * v_right, min_variance);
+  double const sigma_left  = std::max(fabs(alpha * v_left),  min_variance);
+  double const sigma_right = std::max(fabs(alpha * v_right), min_variance);
   normal_dist const dist_left(v_left, sigma_left);
   normal_dist const dist_right(v_right, sigma_right);
   normal_gen gen_noisy_left(rng_, dist_left);
@@ -430,13 +431,15 @@ void DiffDrivePlugin::publish_odometry()
   pub_odom_.publish(odom);
 
   // Publish the WheelOdometry message.
+  double const stddev_left  = std::max(fabs(alpha * update.v_left), min_variance);
+  double const stddev_right = std::max(fabs(alpha * update.v_right), min_variance);
   robot_kf::WheelOdometry wheel_odom;
   wheel_odom.header.stamp = curr_time;
   wheel_odom.header.frame_id = base_footprint_frame;
-  wheel_odom.movement_left  = update.v_left / delta_time; 
-  wheel_odom.movement_right = update.v_right / delta_time;
-  wheel_odom.velocity_left  = update.v_left;
-  wheel_odom.velocity_right = update.v_right;
+  wheel_odom.left.movement = update.v_left;
+  wheel_odom.left.variance = pow(stddev_left, 2);
+  wheel_odom.right.movement = update.v_right;
+  wheel_odom.right.variance = pow(stddev_right, 2);
   pub_wheel_.publish(wheel_odom);
 
   // Broadcast the corresponding TF transform from /odom to /base_footprint.
