@@ -100,8 +100,8 @@ private:
 
   // Odometry Noise
   boost::mt19937 rng_;
-  btVector3 last_pos_;
-  double last_yaw_;
+  btVector3 last_pos_, last_odom_pos_;
+  double last_yaw_, last_odom_yaw_;
 
   // ROS STUFF
   ros::NodeHandle* rosnode_;
