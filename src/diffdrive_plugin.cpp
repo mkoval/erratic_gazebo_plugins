@@ -430,17 +430,21 @@ void DiffDrivePlugin::publish_odometry()
   odom.twist.twist.angular.z = v_angular.z;
   pub_odom_.publish(odom);
 
+  // FIXME: Hack.
+  double const beta = 1;
+
   // Publish the WheelOdometry message.
   double const stddev_left  = std::max(fabs(alpha * update.v_left), min_variance);
   double const stddev_right = std::max(fabs(alpha * update.v_right), min_variance);
   robot_kf::WheelOdometry wheel_odom;
   wheel_odom.header.stamp = curr_time;
   wheel_odom.header.frame_id = base_footprint_frame;
+  wheel_odom.timestep = curr_time - last_time_;
   wheel_odom.separation = wheelSeparation;
   wheel_odom.left.movement = update.v_left;
-  wheel_odom.left.variance = pow(stddev_left, 2);
+  wheel_odom.left.variance = pow(beta * stddev_left, 2);
   wheel_odom.right.movement = update.v_right;
-  wheel_odom.right.variance = pow(stddev_right, 2);
+  wheel_odom.right.variance = pow(beta * stddev_right, 2);
   pub_wheel_.publish(wheel_odom);
 
   // Broadcast the corresponding TF transform from /odom to /base_footprint.
